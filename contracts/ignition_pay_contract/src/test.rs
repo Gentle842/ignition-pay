@@ -663,3 +663,106 @@ fn test_quote_lock_is_one_time_and_preserves_terms() {
     assert_eq!(executed.buy_amount, 250);
     assert_eq!(contract.get_quote(&id).executed, true);
 }
+
+// --- PaymentContract batch_send payout_sent event tests ---
+
+mod mock_token {
+    use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+
+    #[contract]
+    pub struct MockToken;
+
+    #[contractimpl]
+    impl MockToken {
+        pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {}
+    }
+}
+
+#[test]
+fn test_batch_send_emits_payout_sent_per_recipient() {
+    use crate::PaymentContract;
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{vec, IntoVal, Vec};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Register a minimal mock token that accepts transfer calls.
+    let token_id = env.register_contract(None, mock_token::MockToken);
+
+    let admin = Address::random(&env);
+    let sender = Address::random(&env);
+    let recipient_a = Address::random(&env);
+    let recipient_b = Address::random(&env);
+    let recipient_c = Address::random(&env);
+
+    // Deploy and initialise the PaymentContract.
+    let payment_id = env.register_contract(None, PaymentContract);
+    let payment_client = crate::PaymentContractClient::new(&env, &payment_id);
+    payment_client.initialize(&admin, &token_id);
+
+    // Build inputs: 3 recipients with distinct amounts.
+    let recipients: Vec<Address> = vec![
+        &env,
+        recipient_a.clone(),
+        recipient_b.clone(),
+        recipient_c.clone(),
+    ];
+    let amounts: Vec<i128> = vec![&env, 100_i128, 200_i128, 300_i128];
+
+    payment_client.batch_send(&sender, &recipients, &amounts);
+
+    // Collect all events emitted during this invocation.
+    let all_events = env.events().all();
+
+    // Separate payout_sent events from the batch_payment_sent summary.
+    let payout_topic = Symbol::new(&env, "payout_sent");
+    let batch_topic = Symbol::new(&env, "batch_payment_sent");
+
+    let payout_events: soroban_sdk::Vec<_> = all_events
+        .iter()
+        .filter(|(_, topics, _)| {
+            // topics is a Val-encoded tuple; compare the first element.
+            let topics_vec: soroban_sdk::Vec<soroban_sdk::Val> =
+                soroban_sdk::Vec::from_val(&env, topics);
+            if topics_vec.is_empty() {
+                return false;
+            }
+            let first: Symbol = topics_vec.get(0).unwrap().try_into_val(&env).unwrap_or_else(|_| Symbol::new(&env, ""));
+            first == payout_topic
+        })
+        .collect();
+
+    let batch_events: soroban_sdk::Vec<_> = all_events
+        .iter()
+        .filter(|(_, topics, _)| {
+            let topics_vec: soroban_sdk::Vec<soroban_sdk::Val> =
+                soroban_sdk::Vec::from_val(&env, topics);
+            if topics_vec.is_empty() {
+                return false;
+            }
+            let first: Symbol = topics_vec.get(0).unwrap().try_into_val(&env).unwrap_or_else(|_| Symbol::new(&env, ""));
+            first == batch_topic
+        })
+        .collect();
+
+    // Exactly 3 payout_sent events — one per recipient.
+    assert_eq!(payout_events.len(), 3, "expected exactly 3 payout_sent events");
+
+    // Verify each payout_sent carries the correct (recipient, amount) payload.
+    let expected: [(Address, i128); 3] = [
+        (recipient_a.clone(), 100_i128),
+        (recipient_b.clone(), 200_i128),
+        (recipient_c.clone(), 300_i128),
+    ];
+    for (i, (exp_recipient, exp_amount)) in expected.iter().enumerate() {
+        let (_, _, data) = &payout_events.get(i as u32).unwrap();
+        let (got_recipient, got_amount): (Address, i128) =
+            data.try_into_val(&env).expect("payout_sent data must be (Address, i128)");
+        assert_eq!(&got_recipient, exp_recipient, "payout_sent[{}] recipient mismatch", i);
+        assert_eq!(got_amount, *exp_amount, "payout_sent[{}] amount mismatch", i);
+    }
+
+    // The original batch_payment_sent summary event must still be present exactly once.
+    assert_eq!(batch_events.len(), 1, "expected exactly 1 batch_payment_sent summary event");
+}
