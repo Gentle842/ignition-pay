@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "fix/issue-838-contract-026-no-get-authorized-enumeration",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "fix/issue-838-contract-026-no-get-authorized-enumeration": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "fix/issue-838-contract-026-no-get-authorized-enumeration",
+    "origin"
+  ]
+}
