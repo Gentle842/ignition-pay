@@ -109,6 +109,28 @@ impl IgnitionPayContract {
         authorizations.contains(&user)
     }
 
+    /// Enumerate authorized users with pagination.
+    ///
+    /// Returns up to `limit` authorized addresses starting at `offset`.
+    /// If `offset` is beyond the end of the list, an empty vector is returned.
+    pub fn authorized_users(env: Env, offset: u32, limit: u32) -> Vec<Address> {
+        let authorizations: Vec<Address> = env.storage().instance().get(&Symbol::new(&env, AUTHORIZATIONS_KEY)).unwrap_or_else(|| Vec::new(&env));
+        let total = authorizations.len();
+        let mut result = Vec::new(&env);
+        if offset >= total || limit == 0 {
+            return result;
+        }
+        let end = core::cmp::min(offset.saturating_add(limit), total);
+        let mut i = offset;
+        while i < end {
+            if let Some(addr) = authorizations.get(i) {
+                result.push_back(addr);
+            }
+            i += 1;
+        }
+        result
+    }
+
     pub fn version(env: Env) -> Symbol {
         env.storage().instance().get(&Symbol::new(&env, VERSION_KEY)).unwrap_or_else(|| panic!("Version not set"))
     }
