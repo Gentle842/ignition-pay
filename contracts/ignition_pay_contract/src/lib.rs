@@ -1249,9 +1249,13 @@ impl PaymentContract {
             env.invoke_contract::<()>(
                 &token,
                 &Symbol::new(&env, "transfer"),
-                (sender.clone(), recipient, amount),
+                (sender.clone(), recipient.clone(), amount),
             );
             Self::increment_payment_count(&env, &sender);
+            env.events().publish(
+                (Symbol::new(&env, "payout_sent"), sender.clone()),
+                (recipient, amount),
+            );
         }
 
         // Emit batch_payment_sent event.
